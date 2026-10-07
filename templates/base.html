@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Today{% endblock %} - {{ salon }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <nav class="side" aria-label="Main">
+      <a class="brand" href="{{ url_for('today') }}">{{ salon }}</a>
+      <div class="links">
+        <a href="{{ url_for('today') }}" {% if request.endpoint == 'today' %}aria-current="page"{% endif %}>Today</a>
+        <a href="{{ url_for('services') }}" {% if request.endpoint == 'services' %}aria-current="page"{% endif %}>Services</a>
+        <a href="{{ url_for('staff') }}" {% if request.endpoint == 'staff' %}aria-current="page"{% endif %}>Stylists</a>
+        <a href="{{ url_for('settings') }}" {% if request.endpoint == 'settings' %}aria-current="page"{% endif %}>Hours and details</a>
+        <a href="{{ url_for('numbers') }}" {% if request.endpoint == 'numbers' %}aria-current="page"{% endif %}>Last 7 days</a>
+      </div>
+      <form method="post" action="{{ url_for('logout') }}" class="signout">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="link">Sign out</button>
+      </form>
+    </nav>
+    <main>
+      {% with msgs = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in msgs %}<p class="flash {{ cat }}" role="status">{{ msg }}</p>{% endfor %}
+      {% endwith %}
+      {% block body %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

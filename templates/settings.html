@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Hours and details{% endblock %}
+{% block body %}
+<header class="pagehead">
+  <h1>Hours and details</h1>
+  <p class="muted">This is what customers see in the bot, and the rules it follows when offering times.</p>
+</header>
+
+<form method="post" class="grid wide">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Salon name <input name="salon_name" value="{{ s.salon_name }}" maxlength="80" required></label>
+  <label>Phone <input name="phone" value="{{ s.phone }}" maxlength="30" inputmode="tel"></label>
+  <label class="full">Address and directions <input name="address" value="{{ s.address }}" maxlength="200"></label>
+  <label>Opens <input type="time" name="open_time" value="{{ s.open_time }}" required></label>
+  <label>Closes <input type="time" name="close_time" value="{{ s.close_time }}" required></label>
+  <fieldset class="full">
+    <legend>Closed on</legend>
+    {% for d in weekdays %}
+      <label class="check"><input type="checkbox" name="closed" value="{{ loop.index0 }}" {% if loop.index0|string in closed %}checked{% endif %}> {{ d }}</label>
+    {% endfor %}
+  </fieldset>
+  <label>Start times every (minutes) <input type="number" name="slot_step" value="{{ s.slot_step }}" min="5" max="120" step="5"></label>
+  <label>Customers can book up to (days ahead) <input type="number" name="booking_days" value="{{ s.booking_days }}" min="1" max="60"></label>
+  <label>Earliest booking from now (minutes) <input type="number" name="min_lead_min" value="{{ s.min_lead_min }}" min="0" max="600"></label>
+  <label>No changes by customers within (hours) <input type="number" name="cancel_hours" value="{{ s.cancel_hours }}" min="0" max="72"></label>
+  <button class="primary">Save settings</button>
+</form>
+{% endblock %}

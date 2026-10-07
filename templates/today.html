@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ day.strftime('%a %d %b') }}{% endblock %}
+{% block body %}
+<header class="dayhead">
+  <div>
+    <h1>{{ 'Today' if is_today else day.strftime('%A') }}</h1>
+    <p class="muted">{{ day.strftime('%A, %d %B %Y') }}. {{ open_count }} appointment{{ '' if open_count == 1 else 's' }} still to come or unmarked.</p>
+  </div>
+  <div class="daynav">
+    <a href="{{ url_for('today', d=prev_day.isoformat()) }}">Previous day</a>
+    {% if not is_today %}<a href="{{ url_for('today') }}">Back to today</a>{% endif %}
+    <a href="{{ url_for('today', d=next_day.isoformat()) }}">Next day</a>
+  </div>
+</header>
+
+{% macro nowrow() %}
+  <li class="now"><span>{{ now_hm }}</span><i></i><em>Now</em></li>
+{% endmacro %}
+
+{% if rows %}
+<ol class="timeline">
+  {% for r in rows %}
+    {% if is_today and loop.index0 == marker %}{{ nowrow() }}{% endif %}
+    <li class="slot {{ r.status }} {{ r.source }}">
+      <div class="time"><strong>{{ r.start_at[11:] }}</strong><span>to {{ r.end_at[11:] }}</span></div>
+      <div class="what">
+        {% if r.source == 'block' %}
+          <p class="who">{{ r.note }}</p>
+          <p class="muted">Blocked for {{ r.staff_name }}</p>
+        {% else %}
+          <p class="who">{{ r.customer_name or 'Customer' }}
+            {% if r.phone %}<a class="tel" href="tel:{{ r.phone }}">{{ r.phone }}</a>{% endif %}</p>
+          <p class="muted">{{ r.service_en }} with {{ r.staff_name }}{% if r.source == 'walkin' %}. Walk-in{% endif %}{% if r.price %}. {{ '%g' % r.price }} ETB{% endif %}</p>
+        {% endif %}
+      </div>
+      <div class="acts">
+        {% if r.status == 'confirmed' %}
+          {% if r.source != 'block' %}
+            <form method="post" action="{{ url_for('booking_action', bid=r.id, action='done') }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ url_for('today', d=day.isoformat()) }}">
+              <button class="ok">Mark done</button></form>
+            <form method="post" action="{{ url_for('booking_action', bid=r.id, action='no_show') }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ url_for('today', d=day.isoformat()) }}">
+              <button>No-show</button></form>
+          {% endif %}
+          <form method="post" action="{{ url_for('booking_action', bid=r.id, action='cancel') }}"
+                onsubmit="return confirm('{{ 'Remove this block?' if r.source == 'block' else 'Cancel this appointment? The customer will be told on Telegram.' }}')">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ url_for('today', d=day.isoformat()) }}">
+            <button class="danger">{{ 'Remove' if r.source == 'block' else 'Cancel' }}</button></form>
+        {% else %}
+          <span class="chip {{ r.status }}">{{ {'done': 'Done', 'no_show': 'No-show', 'cancelled': 'Cancelled'}[r.status] }}</span>
+        {% endif %}
+      </div>
+    </li>
+  {% endfor %}
+  {% if is_today and marker == rows|length %}{{ nowrow() }}{% endif %}
+</ol>
+{% else %}
+  <p class="empty">Nothing booked for this day yet. Appointments made on Telegram appear here as soon as customers confirm them. You can also add a walk-in below.</p>
+{% endif %}
+
+<section class="adders">
+  <details>
+    <summary>Add a walk-in</summary>
+    <form method="post" action="{{ url_for('walkin') }}" class="grid">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="day" value="{{ day.isoformat() }}">
+      <label>Customer name <input name="name" maxlength="60" placeholder="Walk-in"></label>
+      <label>Phone <input name="phone" maxlength="20" inputmode="tel"></label>
+      <label>Service
+        <select name="service" required>{% for s in services %}<option value="{{ s.id }}">{{ s.name_en }} ({{ s.duration_min }} min)</option>{% endfor %}</select></label>
+      <label>Stylist
+        <select name="staff" required>{% for s in staff %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>
+      <label>Start time <input type="time" name="time" required value="{{ now_hm if is_today else '10:00' }}"></label>
+      <button class="primary">Add walk-in</button>
+    </form>
+  </details>
+  <details>
+    <summary>Block time (break, day off, training)</summary>
+    <form method="post" action="{{ url_for('block') }}" class="grid">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="day" value="{{ day.isoformat() }}">
+      <label>Who
+        <select name="staff"><option value="all">Everyone</option>{% for s in staff %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>
+      <label>From <input type="time" name="time" required value="13:00"></label>
+      <label>Length in minutes <input type="number" name="minutes" min="5" max="600" step="5" required value="60"></label>
+      <label>Reason <input name="note" maxlength="80" placeholder="Lunch break"></label>
+      <button class="primary">Block time</button>
+    </form>
+  </details>
+</section>
+{% endblock %}

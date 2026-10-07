@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login">
+  <form method="post" class="login-box">
+    <h1>Salon desk</h1>
+    <p class="muted">Sign in to see today's appointments.</p>
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in msgs %}<p class="flash {{ cat }}" role="alert">{{ msg }}</p>{% endfor %}
+    {% endwith %}
+    <label>Password
+      <input type="password" name="password" autofocus required autocomplete="current-password">
+    </label>
+    <button class="primary">Sign in</button>
+  </form>
+</body>
+</html>

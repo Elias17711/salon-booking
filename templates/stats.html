@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Last 7 days{% endblock %}
+{% block body %}
+<header class="pagehead">
+  <h1>Last 7 days</h1>
+  <p class="muted">Counts only include appointments whose start time has already passed. Mark each one as done or no-show on the Today page so these numbers stay accurate.</p>
+</header>
+
+<dl class="facts">
+  <div><dt>Done</dt><dd>{{ st.done }}</dd></div>
+  <div><dt>No-shows</dt><dd>{{ st.no_show }}</dd></div>
+  <div><dt>Cancelled</dt><dd>{{ st.cancelled }}</dd></div>
+  <div><dt>Not marked yet</dt><dd>{{ st.unmarked }}</dd></div>
+</dl>
+
+<p class="lead">
+  {% if st.no_show_rate is none %}
+    No-show rate: not enough marked appointments yet.
+  {% else %}
+    {{ st.no_show_rate }}% of marked appointments were no-shows.
+  {% endif %}
+</p>
+
+<div class="two">
+  <section>
+    <h2>Busiest hours</h2>
+    {% if st.busiest %}
+      <ol class="plain">{% for r in st.busiest %}<li>{{ r.hour }}:00 to {{ r.hour }}:59 <span class="muted">{{ r.n }} appointment{{ '' if r.n == 1 else 's' }}</span></li>{% endfor %}</ol>
+    {% else %}<p class="muted">No finished appointments yet.</p>{% endif %}
+  </section>
+  <section>
+    <h2>Most booked services</h2>
+    {% if st.top_services %}
+      <ol class="plain">{% for r in st.top_services %}<li>{{ r.name }} <span class="muted">{{ r.n }}</span></li>{% endfor %}</ol>
+    {% else %}<p class="muted">No finished appointments yet.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Stylists{% endblock %}
+{% block body %}
+<header class="pagehead">
+  <h1>Stylists</h1>
+  <p class="muted">Each stylist has their own calendar. Tick the days they work. If you have more than one active stylist, customers can pick one or choose "Any available".</p>
+</header>
+
+<ul class="rows">
+  {% for s in staff %}
+  {% set worked = s.work_days.split(',') %}
+  <li class="{{ '' if s.active else 'off' }}">
+    <form method="post" action="{{ url_for('staff_save', stid=s.id) }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Name <input name="name" value="{{ s.name }}" maxlength="60" required></label>
+      <fieldset>
+        <legend>Works on</legend>
+        {% for d in weekdays %}
+          <label class="check"><input type="checkbox" name="days" value="{{ loop.index0 }}" {% if loop.index0|string in worked %}checked{% endif %}> {{ d }}</label>
+        {% endfor %}
+      </fieldset>
+      <button>Save changes</button>
+    </form>
+    <form method="post" action="{{ url_for('staff_toggle', stid=s.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="{{ 'danger' if s.active else 'ok' }}">{{ 'Stop taking bookings' if s.active else 'Take bookings again' }}</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+
+<section class="adders">
+  <details>
+    <summary>Add a stylist</summary>
+    <form method="post" action="{{ url_for('staff_add') }}" class="grid">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Name <input name="name" maxlength="60" required></label>
+      <fieldset>
+        <legend>Works on</legend>
+        {% for d in weekdays %}
+          <label class="check"><input type="checkbox" name="days" value="{{ loop.index0 }}" {% if loop.index0 < 6 %}checked{% endif %}> {{ d }}</label>
+        {% endfor %}
+      </fieldset>
+      <button class="primary">Add stylist</button>
+    </form>
+  </details>
+</section>
+{% endblock %}
