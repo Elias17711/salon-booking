@@ -258,7 +258,7 @@ if __name__ == "__main__":
         raise SystemExit("DASHBOARD_PASSWORD is missing. Copy .env.example to .env and fill it in.")
     db.init_db()
     from waitress import serve
-    host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
-    port = int(os.environ.get("DASHBOARD_PORT", "8000"))
+    host = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", "8000")))
     print(f"Dashboard running on http://{host}:{port}")
     serve(app, host=host, port=port)
