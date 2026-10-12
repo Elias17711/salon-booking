@@ -30,10 +30,18 @@ def password():
 
 
 # ---------------------------------------------------------------- auth + CSRF
+@app.get("/healthz")
+def healthz():
+    """Public, does not touch the database. Point an uptime monitor here."""
+    return "ok"
+
+
 @app.before_request
 def guard():
+    if request.endpoint in (None, "static", "healthz"):
+        return
     db.init_db()
-    if request.endpoint in (None, "static", "login"):
+    if request.endpoint == "login":
         return
     if not session.get("ok"):
         return redirect(url_for("login"))
@@ -258,7 +266,7 @@ if __name__ == "__main__":
         raise SystemExit("DASHBOARD_PASSWORD is missing. Copy .env.example to .env and fill it in.")
     db.init_db()
     from waitress import serve
-    host = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", "8000")))
+    host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
+    port = int(os.environ.get("DASHBOARD_PORT", "8000"))
     print(f"Dashboard running on http://{host}:{port}")
     serve(app, host=host, port=port)

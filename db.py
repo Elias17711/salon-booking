@@ -1,12 +1,19 @@
-"""SQLite data layer shared by the Telegram bot and the web dashboard.
+"""Data layer shared by the Telegram bot and the web dashboard.
+
+Two storage back-ends, one set of functions:
+  * a SQLite file (default; simplest on your own PC), or
+  * PostgreSQL, used automatically when the DATABASE_URL environment variable is
+    set. A hosted Postgres keeps your data when a host such as Render restarts.
 
 All times are stored as local Addis Ababa time in the text format
 "YYYY-MM-DD HH:MM", which sorts correctly as plain text.
 """
 import os
+import re
 import sqlite3
+import threading
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 TZ = timezone(timedelta(hours=3))  # Africa/Addis_Ababa, no daylight saving
 FMT = "%Y-%m-%d %H:%M"
@@ -62,13 +69,85 @@ def db_path():
     return os.environ.get("DB_PATH", "salon.db")
 
 
+def database_url():
+    return os.environ.get("DATABASE_URL", "").strip()
+
+
+def using_postgres():
+    return bool(database_url())
+
+
 def now():
     """Current local time in Addis Ababa as a naive datetime."""
     return datetime.now(TZ).replace(tzinfo=None)
 
 
+# ---------- PostgreSQL support ----------
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+
+            _pool = ConnectionPool(
+                database_url(), min_size=1, max_size=5, timeout=30, open=True,
+                kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": None},
+                check=ConnectionPool.check_connection,  # replaces connections the host closed while idle
+            )
+        return _pool
+
+
+def close_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+
+
+def _pg_sql(sql):
+    """Turn the SQLite-style statements used in this file into PostgreSQL."""
+    s = sql.strip()
+    ignore = bool(re.match(r"INSERT OR IGNORE INTO", s, re.I))
+    if ignore:
+        s = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", s, count=1, flags=re.I)
+    s = s.replace("?", "%s")
+    return s + " ON CONFLICT DO NOTHING" if ignore else s
+
+
+def _pg_schema(schema):
+    s = schema.replace("chat_id INTEGER PRIMARY KEY", "chat_id BIGINT PRIMARY KEY")
+    s = s.replace("INTEGER PRIMARY KEY", "SERIAL PRIMARY KEY")
+    s = s.replace("chat_id INTEGER,", "chat_id BIGINT,")  # Telegram ids can exceed 32 bits
+    return s.replace("price REAL", "price DOUBLE PRECISION")
+
+
+class PgConn:
+    """Gives a psycopg connection the small sqlite3-style surface this app uses."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, sql, params=()):
+        return self.raw.execute(_pg_sql(sql), params)
+
+    def executescript(self, script):
+        for stmt in script.split(";"):
+            if stmt.strip():
+                self.raw.execute(stmt)
+
+
 @contextmanager
 def conn():
+    if using_postgres():
+        with _get_pool().connection() as raw:
+            yield PgConn(raw)
+        return
     c = sqlite3.connect(db_path(), timeout=10, isolation_level=None)  # autocommit
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
@@ -79,6 +158,15 @@ def conn():
         c.close()
 
 
+def _begin_write(c):
+    """Start a transaction that only one writer at a time can hold."""
+    if isinstance(c, PgConn):
+        c.execute("BEGIN")
+        c.execute("LOCK TABLE bookings IN SHARE ROW EXCLUSIVE MODE")
+    else:
+        c.execute("BEGIN IMMEDIATE")
+
+
 def fmt(dt):
     return dt.strftime(FMT)
 
@@ -87,20 +175,30 @@ def parse(text):
     return datetime.strptime(text, FMT)
 
 
+_ready = set()
+_init_lock = threading.Lock()
+
+
 def init_db():
-    with conn() as c:
-        c.executescript(SCHEMA)
-        for k, v in DEFAULT_SETTINGS.items():
-            c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
-        if not c.execute("SELECT 1 FROM services LIMIT 1").fetchone():
-            # Sample data so the bot works on first run. Edit these in the dashboard.
-            for en, am, mins, price in [("Haircut", "የፀጉር ቁርጥ", 30, 300),
-                                        ("Braids", "ሹሩባ", 120, 800),
-                                        ("Manicure", "የጥፍር ውበት", 45, 250)]:
-                c.execute("INSERT INTO services(name_en, name_am, duration_min, price) VALUES(?,?,?,?)",
-                          (en, am, mins, price))
-        if not c.execute("SELECT 1 FROM staff LIMIT 1").fetchone():
-            c.execute("INSERT INTO staff(name) VALUES('Stylist 1')")
+    """Create tables and sample data once per process (cheap to call repeatedly)."""
+    key = database_url() or db_path()
+    with _init_lock:
+        if key in _ready and (using_postgres() or os.path.exists(db_path())):
+            return
+        with conn() as c:
+            c.executescript(_pg_schema(SCHEMA) if using_postgres() else SCHEMA)
+            for k, v in DEFAULT_SETTINGS.items():
+                c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
+            if not c.execute("SELECT 1 FROM services LIMIT 1").fetchone():
+                # Sample data so the bot works on first run. Edit these in the dashboard.
+                for en, am, mins, price in [("Haircut", "የፀጉር ቁርጥ", 30, 300),
+                                            ("Braids", "ሹሩባ", 120, 800),
+                                            ("Manicure", "የጥፍር ውበት", 45, 250)]:
+                    c.execute("INSERT INTO services(name_en, name_am, duration_min, price) VALUES(?,?,?,?)",
+                              (en, am, mins, price))
+            if not c.execute("SELECT 1 FROM staff LIMIT 1").fetchone():
+                c.execute("INSERT INTO staff(name) VALUES('Stylist 1')")
+        _ready.add(key)
 
 
 # ---------- settings ----------
@@ -194,45 +292,73 @@ def _hhmm(text):
     return timedelta(hours=int(h), minutes=int(m))
 
 
-def free_slots(day, service_id, staff_id=None):
-    """Return [(\"HH:MM\", staff_id), ...] of bookable start times on `day`.
+def _load_context(service_id, staff_id):
+    settings = get_settings()
+    svc = get_service(service_id)
+    candidates = [get_staff(staff_id)] if staff_id else list_staff()
+    return settings, svc, [x for x in candidates if x and x["active"]]
 
-    With staff_id=None, each time is offered if ANY working stylist is free and
-    the first free stylist is assigned.
-    """
-    s = get_settings()
+
+def _busy_map(staff_ids, first_day, last_day):
+    """{staff_id: [(start, end), ...]} of occupied time between two days (inclusive)."""
+    busy = {i: [] for i in staff_ids}
+    if not staff_ids:
+        return busy
+    marks = ",".join("?" * len(staff_ids))
+    with conn() as c:
+        rows = c.execute(
+            f"SELECT staff_id, start_at, end_at FROM bookings WHERE staff_id IN ({marks}) "
+            f"AND status IN {BLOCKING} AND start_at >= ? AND start_at < ?",
+            (*staff_ids, first_day.isoformat(), (last_day + timedelta(days=1)).isoformat())).fetchall()
+    for r in rows:
+        busy[r["staff_id"]].append((parse(r["start_at"]), parse(r["end_at"])))
+    return busy
+
+
+def _compute_slots(day, s, svc, staff, busy):
     wd = str(day.weekday())
     if wd in s["closed_days"].split(","):
         return []
-    svc = get_service(service_id)
-    if not svc:
-        return []
+    working = [x for x in staff if wd in x["work_days"].split(",")]
     dur = timedelta(minutes=svc["duration_min"])
     step = timedelta(minutes=max(5, int(s["slot_step"])))
     midnight = datetime.combine(day, datetime.min.time())
     opens, closes = midnight + _hhmm(s["open_time"]), midnight + _hhmm(s["close_time"])
     earliest = now() + timedelta(minutes=int(s["min_lead_min"]))
-
-    candidates = [get_staff(staff_id)] if staff_id else list_staff()
-    staff = [x for x in candidates if x and x["active"] and wd in x["work_days"].split(",")]
-    busy = {}
-    with conn() as c:
-        for x in staff:
-            rows = c.execute(
-                f"SELECT start_at, end_at FROM bookings WHERE staff_id=? AND status IN {BLOCKING} "
-                "AND substr(start_at,1,10)=?", (x["id"], day.isoformat())).fetchall()
-            busy[x["id"]] = [(parse(r["start_at"]), parse(r["end_at"])) for r in rows]
-
     slots = {}
     t = opens
     while t + dur <= closes:
         if t >= earliest:
-            for x in staff:
-                if all(t + dur <= b0 or t >= b1 for b0, b1 in busy[x["id"]]):
+            for x in working:
+                if all(t + dur <= b0 or t >= b1 for b0, b1 in busy.get(x["id"], [])):
                     slots.setdefault(t.strftime("%H:%M"), x["id"])
                     break
         t += step
     return sorted(slots.items())
+
+
+def free_slots(day, service_id, staff_id=None):
+    """Return [("HH:MM", staff_id), ...] of bookable start times on `day`.
+
+    With staff_id=None, each time is offered if ANY working stylist is free and
+    the first free stylist is assigned.
+    """
+    s, svc, staff = _load_context(service_id, staff_id)
+    if not svc:
+        return []
+    busy = _busy_map([x["id"] for x in staff], day, day)
+    return _compute_slots(day, s, svc, staff, busy)
+
+
+def available_days(service_id, staff_id=None):
+    """Days (from today) that still have at least one free time. Uses few queries."""
+    s, svc, staff = _load_context(service_id, staff_id)
+    if not svc:
+        return []
+    today, n = now().date(), int(s["booking_days"])
+    busy = _busy_map([x["id"] for x in staff], today, today + timedelta(days=n - 1))
+    days = (today + timedelta(days=i) for i in range(n))
+    return [d for d in days if _compute_slots(d, s, svc, staff, busy)]
 
 
 # ---------- bookings ----------
@@ -246,7 +372,7 @@ def create_booking(*, staff_id, start, minutes, service_id=None, chat_id=None,
     end = start + timedelta(minutes=minutes)
     n = now()
     with conn() as c:
-        c.execute("BEGIN IMMEDIATE")
+        _begin_write(c)
         try:
             clash = c.execute(
                 f"SELECT 1 FROM bookings WHERE staff_id=? AND status IN {BLOCKING} "
@@ -254,14 +380,15 @@ def create_booking(*, staff_id, start, minutes, service_id=None, chat_id=None,
             if clash:
                 c.execute("ROLLBACK")
                 return None
-            cur = c.execute(
+            rows = c.execute(
                 "INSERT INTO bookings(chat_id, customer_name, phone, service_id, staff_id, start_at, end_at,"
-                " source, note, reminded_day, reminded_soon, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                " source, note, reminded_day, reminded_soon, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+                "RETURNING id",
                 (chat_id, name, phone, service_id, staff_id, fmt(start), fmt(end), source, note,
                  1 if start - n <= timedelta(hours=24) else 0,
-                 1 if start - n <= timedelta(hours=2) else 0, fmt(n)))
+                 1 if start - n <= timedelta(hours=2) else 0, fmt(n))).fetchall()
             c.execute("COMMIT")
-            return cur.lastrowid
+            return rows[0]["id"]
         except Exception:
             c.execute("ROLLBACK")
             raise

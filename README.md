@@ -8,7 +8,8 @@ A Telegram bot where customers book salon appointments (English and Amharic), pl
 |---|---|
 | `bot.py` | The Telegram bot: booking flow, my bookings, cancel and reschedule, reminders, owner alerts |
 | `dashboard.py` + `templates/` + `static/` | The web dashboard for the salon |
-| `db.py` | The SQLite database, the free-time calculation and the double-booking protection |
+| `db.py` | The database (SQLite file, or PostgreSQL when `DATABASE_URL` is set), the free-time calculation and the double-booking protection |
+| `run_all.py` | Starts the dashboard and the bot together (used on hosts with one start command) |
 | `texts.py` | Every customer-facing message in English and Amharic |
 | `tg.py` | Lets the dashboard message a customer when the salon cancels |
 | `tests/` | Automated tests and an offline bot simulation |
@@ -74,7 +75,21 @@ python -m unittest discover -s tests -v
 python tests/simulate_bot.py
 ```
 
-The first runs 16 checks on the database and dashboard. The second drives the real bot handlers with fake Telegram messages and prints what a customer would see.
+To run the same checks against PostgreSQL, set `DATABASE_URL` first. The tests wipe that database, so use an empty test one.
+
+The first runs 18 checks on the database and dashboard. The second drives the real bot handlers with fake Telegram messages and prints what a customer would see.
+
+## Keeping your data on a host that restarts (Render and similar)
+
+Free hosts such as Render erase local files when they restart, which would delete `salon.db`. To avoid that, give the app a hosted PostgreSQL database:
+
+1. Create a free database (for example at neon.com) and copy its connection address. It starts with `postgresql://` and ends with `sslmode=require`.
+2. On the host, add an environment variable named `DATABASE_URL` with that address. Keep it secret.
+3. Redeploy. The app now stores everything in that database instead of `salon.db`. Tables are created automatically on first start.
+
+When `DATABASE_URL` is empty, the app keeps using the local `salon.db` file.
+
+To keep a sleeping free host awake, point a free uptime monitor at `https://YOUR-ADDRESS/healthz`. It answers `ok` and does not touch the database.
 
 ## Keeping it running
 

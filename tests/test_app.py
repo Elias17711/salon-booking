@@ -9,10 +9,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TMP = tempfile.mkdtemp()
 os.environ["DB_PATH"] = os.path.join(TMP, "test.db")
+# To run the same tests against PostgreSQL:  set DATABASE_URL=postgresql://...  (the schema is wiped!)
 os.environ["DASHBOARD_PASSWORD"] = "pw"
 os.environ["SECRET_KEY"] = "test"
 
 import db  # noqa: E402
+
+
+def reset_db():
+    """Start every test from an empty database, on SQLite or PostgreSQL."""
+    if db.using_postgres():
+        db.close_pool()
+        import psycopg
+        with psycopg.connect(db.database_url(), autocommit=True) as c:
+            c.execute("DROP SCHEMA public CASCADE")
+            c.execute("CREATE SCHEMA public")
+    elif os.path.exists(os.environ["DB_PATH"]):
+        os.remove(os.environ["DB_PATH"])
+    db._ready.clear()
+    db.init_db()
 
 
 def next_open_day():
@@ -24,9 +39,7 @@ def next_open_day():
 
 class DataLayer(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(os.environ["DB_PATH"]):
-            os.remove(os.environ["DB_PATH"])
-        db.init_db()
+        reset_db()
 
     def test_slots_respect_hours_and_duration(self):
         day = next_open_day()
@@ -34,6 +47,13 @@ class DataLayer(unittest.TestCase):
         slots = [s for s, _ in db.free_slots(day, svc["id"])]
         self.assertEqual(slots[0], "09:00")
         self.assertEqual(slots[-1], "17:00")  # 17:00 + 2h = closing time
+
+    def test_available_days_matches_free_slots(self):
+        svc = db.list_services()[0]
+        expected = [d for d in (db.now().date() + timedelta(days=i) for i in range(7))
+                    if db.free_slots(d, svc["id"])]
+        self.assertEqual(db.available_days(svc["id"]), expected)
+        self.assertTrue(expected)
 
     def test_closed_day_has_no_slots(self):
         d = db.now().date() + timedelta(days=1)
@@ -51,6 +71,20 @@ class DataLayer(unittest.TestCase):
         self.assertIsNone(db.create_booking(staff_id=staff["id"], start=start + timedelta(minutes=15), minutes=30))
         self.assertIsNotNone(db.create_booking(staff_id=staff["id"], start=start + timedelta(minutes=30), minutes=30))
         self.assertNotIn("10:00", [s for s, _ in db.free_slots(day, svc["id"])])
+
+    def test_many_customers_tapping_the_same_time_only_one_wins(self):
+        import threading
+        day, staff = next_open_day(), db.list_staff()[0]
+        start = datetime.combine(day, datetime.strptime("15:00", "%H:%M").time())
+        results = []
+
+        def book(i):
+            results.append(db.create_booking(staff_id=staff["id"], start=start, minutes=30, chat_id=1000 + i))
+
+        threads = [threading.Thread(target=book, args=(i,)) for i in range(10)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(len([r for r in results if r is not None]), 1)
 
     def test_cancel_frees_the_slot(self):
         day = next_open_day()
@@ -112,9 +146,7 @@ class Dashboard(unittest.TestCase):
         cls.app.config["TESTING"] = True
 
     def setUp(self):
-        if os.path.exists(os.environ["DB_PATH"]):
-            os.remove(os.environ["DB_PATH"])
-        db.init_db()
+        reset_db()
         self.c = self.app.test_client()
 
     def login(self):

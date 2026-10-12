@@ -225,12 +225,8 @@ async def h_staff(update, context, lang, arg):
 async def show_days(update, context, lang):
     d = context.user_data["draft"]
     settings = db.get_settings()
-    today = db.now().date()
-    buttons = []
-    for i in range(int(settings["booking_days"])):
-        day = today + timedelta(days=i)
-        if db.free_slots(day, d["service"], d["staff"] or None):
-            buttons.append(Btn(day_label(lang, day), callback_data=f"d:{day.isoformat()}"))
+    buttons = [Btn(day_label(lang, day), callback_data=f"d:{day.isoformat()}")
+               for day in db.available_days(d["service"], d["staff"] or None)]
     if not buttons:
         await send(update, t(lang, "no_days", phone=esc(settings["phone"])), back_kb(lang))
         return
